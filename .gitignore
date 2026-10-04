@@ -1,0 +1,8 @@
+CLAUDE.md
+.RData
+.Rhistory
+.Rproj.user/
+reads/
+results/
+*.html
+*_files/

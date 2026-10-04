@@ -1,0 +1,1018 @@
+---
+title: "Dada2 pipeline for amplicon sequences"
+subtitle: "Template version {{< meta version >}}"
+version: "1.0"
+author:
+    name: "Marko Suokas"
+    affiliation: "BCO Sequencing Center"
+format:
+  html:
+    theme: sandstone  # or any other quarto theme
+    code-tools: true
+    code-fold: true
+    code-summary: "Show code"
+params:
+  amplicon: "REQUIRED"
+editor: visual
+---
+
+```{r dynamic_theming, results='asis', echo=FALSE, message=FALSE, warning=FALSE}
+
+library(bslib)
+
+# 1. Read the theme name from the YAML metadata
+theme_setting <- rmarkdown::metadata$format$html$theme
+if (is.list(theme_setting) || length(theme_setting) > 1) {
+  theme_name <- theme_setting[[1]]
+} else {
+  theme_name <- theme_setting
+}
+
+# 2. Create a bslib theme object to extract variables
+if (is.null(theme_name) || theme_name == "default") {
+    t <- bs_theme(version = 5)
+} else {
+    t <- bs_theme(version = 5, bootswatch = theme_name)
+}
+
+# 3. Helper to extract colors safely
+get_color <- function(var_name, fallback = "#000000") {
+  val <- bs_get_variables(t, var_name)
+  if (is.na(val)) return(fallback)
+  return(unname(val))
+}
+
+# 4. Save extracted colors to a globally accessible list
+theme_colors <- list(
+  primary   = get_color("primary", "#0d6efd"),
+  secondary = get_color("secondary", "#6c757d"),
+  success   = get_color("success", "#198754"),
+  warning   = get_color("warning", "#ffc107"),
+  info      = get_color("info", "#0dcaf0"),
+  light     = get_color("light", "#f8f9fa"),
+  dark      = get_color("dark", "#212529"),
+  active    = get_color("component-active-bg", get_color("primary", "#0d6efd")), 
+  default   = get_color("default", get_color("body-color", "#212529"))
+)
+
+# 5. Inject custom CSS for code blocks and inline code
+cat(sprintf("
+<style>
+  /* Code Blocks: primary-colored left border */
+  div.sourceCode { 
+    border-left: 4px solid %1$s !important; 
+    border-radius: 4px !important; 
+  }
+  
+  /* Inline Code: primary-colored text with light background */
+  p code, li code, td code, th code { 
+    background-color: %2$s !important; 
+    color: %1$s !important; 
+    padding: 0.2em 0.4em !important; 
+    border-radius: 3px !important; 
+  }
+</style>
+", theme_colors$primary, theme_colors$light))
+```
+
+The workflow is adapted from the "Dada2 pipeline guide" and the "Bioconductor Workflow for Microbiome Data Analysis: from raw reads to community analyses" by Benjamin Callahan.
+
+The template requires a metadata file in TSV format (with a minimum of two columns of information) in the root directory and a demultiplexed FASTQ dataset in the reads subdirectory. Confirm the location and the naming of the taxonomy reference files. The simplest way to execute the template is to render the file with Quarto via the command line with the amplicon parameter. For example:
+
+`quarto render dada2_template.qmd -P amplicon:16SV4`
+
+Please note that the example analysis will require you to change variables to correspond to your project metadata. Alternatively, you can disable the execution of code chunks with the eval = FALSE statement.
+
+The first step is setting global parameters and loading libraries.
+
+```{r global_parameters, message = FALSE, warning = FALSE}
+
+# Global options
+
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, echo = TRUE)
+knitr::opts_chunk$set(cache = FALSE)
+
+# Amplicon target list
+
+AMPLICON_REGISTRY <- list (
+    "16SV3V4" = list (
+        fwd = "CCTACGGGNGGCWGCAG",
+        rev = "GACTACHVGGGTATCTAATCC",
+        type = "16S",
+        truncLen = c(270, 230),
+        assign_taxonomy = TRUE,
+        ref_db = "~/reference/silva_nr99_v138.2_toGenus_trainset.fa.gz",
+        assign_species = TRUE,
+        species_db = "~/reference/silva_v138.2_assignSpecies.fa.gz",
+        strip_prefix = FALSE,
+        min_length = 200,
+        create_tree = TRUE),
+    "16SV4" = list (
+        fwd = "GTGYCAGCMGCCGCGGTAA",
+        rev = "GGACTACNVGGGTWTCTAAT",
+        type = "16S",
+        truncLen = c(230,230),
+        assign_taxonomy = TRUE,
+        ref_db = "~/reference/silva_nr99_v138.2_toGenus_trainset.fa.gz",
+        assign_species = TRUE,
+        species_db = "~/reference/silva_v138.2_assignSpecies.fa.gz",
+        strip_prefix = FALSE,
+        min_length = 200,
+        create_tree = TRUE),
+    "16SV4V5" = list (
+        fwd = "GTGYCAGCMGCCGCGGTAA",
+        rev = "CCGTCAATTCMTTTGAGTTT",
+        type = "16S",
+        truncLen = c(260,260),
+        assign_taxonomy = TRUE,
+        ref_db = "~/reference/silva_nr99_v138.2_toGenus_trainset.fa.gz",
+        assign_species = TRUE,
+        species_db = "~/reference/silva_v138.2_assignSpecies.fa.gz",
+        strip_prefix = FALSE,
+        min_length = 200,
+        create_tree = TRUE),
+    "ITS2" = list (
+        fwd = "GTGARTCATCGARTCTTTG",
+        rev = "TCCTCCGCTTATTGATATGC",
+        type = "ITS",
+        truncLen = c(0,0),
+        assign_taxonomy = TRUE,
+        ref_db = "~/reference/sh_general_release_dynamic_all_19.02.2025.fasta",
+        assign_species = FALSE,
+        strip_prefix = TRUE,
+        min_length = 150,
+        allow_overhang = TRUE,
+        create_tree = FALSE),
+    "ITS1" = list (
+        fwd = "CTTGGTCATTTAGAGGAAGTAA",
+        rev = "CTGCGTTCTTCATCGAT",
+        type = "ITS",
+        truncLen = c(0,0),
+        assign_taxonomy = TRUE,
+        ref_db = "~/reference/sh_general_release_dynamic_all_19.02.2025.fasta",
+        assign_species = FALSE,
+        strip_prefix = TRUE,
+        min_length = 150,
+        allow_overhang = TRUE,
+        create_tree = FALSE),
+    "12STELEO2" = list (
+        fwd = "AAACTCGTGCCAGCCACC",
+        rev = "GGGTATCTAATCCCAGTTTG",
+        type = "12S",
+        truncLen = c(130,130),
+        assign_taxonomy = FALSE,
+        assign_species = FALSE,
+        strip_prefix = FALSE,
+        min_length = 100,
+        create_tree = FALSE),
+    "ADCR2" = list (
+        fwd = "TGAATGCTCTAGGACCACAC",
+        rev = "CGACTAATAAATCCATCTGATAC",
+        type = "ADCR2",
+        truncLen = c(100,100),
+        assign_taxonomy = FALSE,
+        assign_species = FALSE,
+        strip_prefix = FALSE,
+        min_length = 100,
+        create_tree = FALSE),
+    "RBCL" = list (
+        fwd = c("AGGTGAAGTAAAAGGTTCWTACTTAAA", "AGGTGAAGTTAAAGGTTCWTAYTTAAA",
+                "AGGTGAAACTAAAGGTTCWTACTTAAA"),
+        rev = c("CCTTCTAATTTACCWACWACTG", "CCTTCTAATTTACCWACAACAG"),
+        type = "RBCL",
+        truncLen = c(250,250),
+        assign_taxonomy = FALSE,
+        assign_species = FALSE,
+        strip_prefix = FALSE,
+        min_length = 200,
+        create_tree = FALSE)
+    )
+
+# Confirm region selection
+chosen_amplicon <- params$amplicon
+
+if (is.null(chosen_amplicon) || chosen_amplicon == "REQUIRED") {
+  stop("\n[FATAL ERROR]: Execution halted. You must specify a target amplicon parameter.\n",
+       "Example: quarto render template.qmd -P amplicon:16SV4\n")
+}
+
+if (!chosen_amplicon %in% names(AMPLICON_REGISTRY)) {
+  stop(sprintf("\n[FATAL ERROR]: Region '%s' is not defined in the registry.\nAvailable amplicons are: %s\n", 
+               chosen_amplicon, paste(names(AMPLICON_REGISTRY), collapse = ", ")))
+}
+
+#If it passes, load the configuration
+cfg <- AMPLICON_REGISTRY[[chosen_amplicon]]
+message("Validation successful. Processing target amplicon: ", chosen_amplicon)
+
+# Assign variables — passed to bash chunks as environment variables
+Sys.setenv(FWD_PRIMER = paste(cfg$fwd, collapse = " "))
+Sys.setenv(REV_PRIMER = paste(cfg$rev, collapse = " "))
+Sys.setenv(MIN_LENGTH = cfg$min_length)
+
+# List of R libraries
+
+library(dada2)
+library(mia)
+library(vegan)
+library(Biostrings)
+library(tidyverse)
+library(ape)
+library(kableExtra)
+library(patchwork)
+library(ggthemes)
+library(ggrepel)
+library(ggpubr)
+library(ggsci)
+library(hrbrthemes)
+library(scater)
+library(sessioninfo)
+
+# Read metadata file from root directory and set sampleID column as rownames
+meta <- "metadata.tsv"
+
+# Find the sample ID column (any letter case) and read only it as character,
+# so IDs like "001" keep their leading zeros. Other column types are guessed
+meta_cols <- names(read_tsv(meta, n_max = 0, show_col_types = FALSE))
+id_col <- meta_cols[tolower(meta_cols) == "sampleid"]
+if (length(id_col) != 1) stop("metadata.tsv must contain exactly one 'sampleid' column")
+
+samples_meta <- read_tsv(meta, col_types = setNames(list(col_character()), id_col)) %>%
+    rename(sampleid = all_of(id_col)) %>%
+    column_to_rownames(var = "sampleid")
+
+#Create directories inside project unless they exist
+dir.create("results", showWarnings = FALSE)
+dir.create("reads/trimmed", recursive = TRUE, showWarnings = FALSE)
+
+```
+
+```{r parameter_table, echo = FALSE}
+# Create dataframe of the chosen amplicon settings
+cfg_df <- data.frame(
+  Setting = names(cfg),
+  Value = sapply(cfg, function(x) paste(x, collapse = ", "))
+)
+rownames(cfg_df) <- NULL
+
+# Output as kable table
+kable(cfg_df, format = "html", caption = paste("Amplicon settings for", chosen_amplicon)) %>%
+  kable_styling(bootstrap_options = c("striped", "hover")) %>%
+  row_spec(0, background = theme_colors$primary, color = "white")
+```
+
+PCR primers must be removed before denoising — any remaining primer sequence will be treated as biological variation and produce spurious ASVs. Cutadapt trims the defined primer pair from both read orientations and discards read pairs where no primer was detected (`--discard-untrimmed`). *Note:* *If **cutadapt** is not installed system-wide, you need to activate the Conda environment in two first lines.*
+
+```{bash trim_primers, eval = TRUE}
+
+source ~/.miniconda3/etc/profile.d/conda.sh
+conda activate base
+
+# Define input and output directories
+indir="reads"           # directory containing your R1 and R2 fastq.gz files
+outdir="reads/trimmed"        # output directory for trimmed reads
+mkdir -p "$outdir"
+
+# Start a fresh cutadapt log for this run
+logfile="results/cutadapt.log"
+: > "$logfile"
+
+# Parse multiplexed primers into bash arrays
+FWD_ARGS=()
+for p in $FWD_PRIMER; do
+    FWD_ARGS+=("-g" "$p")
+done
+
+REV_ARGS=()
+for p in $REV_PRIMER; do
+    REV_ARGS+=("-G" "$p")
+done
+
+# Loop through all R1 files and run cutadapt
+for r1 in ${indir}/*_R1_*.fastq.gz; do
+    # Derive R2 file name
+    r2="${r1/_R1_/_R2_}"
+    # Extract base name without path
+    base=$(basename "$r1" | sed 's/_R1_.*//')
+
+    echo "Processing sample: $base"
+
+    cutadapt \
+        "${FWD_ARGS[@]}" \
+        "${REV_ARGS[@]}" \
+        -o "${outdir}/${base}_R1_trimmed.fastq.gz" \
+        -p "${outdir}/${base}_R2_trimmed.fastq.gz" \
+        "$r1" "$r2" \
+        --discard-untrimmed \
+        --minimum-length "$MIN_LENGTH"  \
+        --report=minimal >> "$logfile" 2>&1
+done
+
+```
+
+### Read processing
+
+#### File and sample lists
+
+Build sorted file path lists for forward and reverse reads and extract sample names. The sort order must match between forward and reverse lists — DADA2 pairs reads by position, not by name. Sample names are extracted from the first underscore-delimited token of the filename, so sample IDs should be simple alphanumeric codes without underscores. Use a separate metadata column for human-readable sample names.
+
+```{r file_lists}
+
+#List sequence files in the source directory
+list.files("reads/trimmed")
+
+# Forward read names: SAMPLENAME_PATTERN
+fnFwds <- sort(list.files("reads/trimmed",
+                          pattern = "_L001_R1_trimmed.fastq.gz",
+                          full.names = TRUE))
+
+# Reverse read names: SAMPLENAME_PATTERN
+fnRevs <- sort(list.files("reads/trimmed",
+                          pattern = "_L001_R2_trimmed.fastq.gz",
+                          full.names = TRUE))
+
+# Extract sample names to the list
+sample.names <- sapply(strsplit(basename(fnFwds), "_"), `[`, 1)
+
+```
+
+#### Read quality plots
+
+Quality profiles are aggregated across up to 400,000 randomly sampled reads per direction. Inspect these plots to confirm that truncation lengths are suitable for the filter and trim step. The MiSeq i100 retains high quality longer than older sequencing platforms.
+
+```{r read_quality, eval = TRUE}
+
+qfwd <- plotQualityProfile(fnFwds, aggregate = TRUE,
+                           n = 4e05)
+saveRDS(qfwd, file = "results/qfwd.rds")
+
+qrev <- plotQualityProfile(fnRevs, aggregate = TRUE,
+                           n = 4e05)
+saveRDS(qrev, file = "results/qrev.rds")
+
+```
+
+Plot forward and reverse read qualities. Data can be used to evaluate proper truncation length for filter and trim step.
+
+```{r q-plot, fig.dim = c(12,7)}
+
+qfwd <- readRDS("results/qfwd.rds")
+qrev <- readRDS("results/qrev.rds")
+
+qfwd <- qfwd + ggtitle("Forward reads") + theme_ipsum_rc(base_size = 18)
+qrev <- qrev + ggtitle("Reverse reads") + theme_ipsum_rc(base_size = 18)
+
+qfwd + qrev
+
+```
+
+#### Filter and trim reads
+
+Reads are truncated to a fixed length and discarded if they contain ambiguous bases (`maxN=0`), exceed the maximum expected errors threshold (`maxEE=2`), or drop below quality score 2 (`truncQ=2`). Truncation lengths are set in the amplicon settings and should be chosen so that forward and reverse reads still overlap sufficiently for merging — typically at least 20 bp of overlap. PhiX reads are removed if `rm.phix = TRUE`.
+
+Define output file paths for filtered reads.
+
+```{r filter_list}
+
+# Filtered read files are placed in filtered subdirectory
+filtFwds <- file.path("reads/trimmed", "filtered",
+                      paste0(sample.names, "_F_filt.fastq.gz"))
+filtRevs <- file.path("reads/trimmed", "filtered",
+                      paste0(sample.names, "_R_filt.fastq.gz"))
+
+```
+
+Run filtering and trimming. Results are saved to disk in the next chunk so this step can be skipped on re-runs by setting `eval = FALSE`.
+
+```{r filterandtrim, eval = TRUE}
+
+# Default parameters except truncLen and multithread
+out <- filterAndTrim(fnFwds, filtFwds, fnRevs, filtRevs,
+                     truncLen = cfg$truncLen,
+                     maxN = 0, maxEE = 2, truncQ = 2,
+                     compress = TRUE, multithread = TRUE,
+                     rm.phix = TRUE)
+
+```
+
+#### Remove zero-read samples
+
+Check for samples that lost all reads during filtering and remove them from file lists and metadata. The full sample list is kept, so removed samples are still reported in the denoising summary.
+
+```{r zero_read_check, eval = TRUE}
+
+# Read filtering results from file if the filterandtrim chunk was skipped
+if (!exists("out")) out <- readRDS("results/out.rds")
+
+# Keep the full sample list for the denoising summary
+all_samples <- sample.names
+rownames(out) <- all_samples
+
+# Samples with zero or NA reads after filtering will cause errors in downstream steps
+zero_samples <- is.na(out[, "reads.out"]) | out[, "reads.out"] == 0
+
+if (any(zero_samples)) {
+  cat("Removing", sum(zero_samples), "sample(s) with zero reads after filtering:\n")
+  cat(paste(sample.names[zero_samples], collapse = "\n"), "\n")
+
+  filtFwds <- filtFwds[!zero_samples]
+  filtRevs <- filtRevs[!zero_samples]
+  sample.names <- sample.names[!zero_samples]
+  samples_meta <- samples_meta[rownames(samples_meta) %in% sample.names, , drop = FALSE]
+} else {
+  cat("All samples passed filtering.\n")
+}
+
+# Save objects to files
+saveRDS(out, "results/out.rds")
+saveRDS(all_samples, "results/all_samples.rds")
+
+```
+
+#### Learn error rates
+
+DADA2 learns the instrument-specific error rates from the data by fitting a parametric model to the observed frequency of each possible base transition as a function of quality score. This model is later used to distinguish true biological sequences from sequencing errors during denoising. This pipeline is optimised for the MiSeq i100 platform, which uses binned (discrete) quality scores. The bins `c(2, 9, 23, 38)` are MiSeq i100-specific and must be changed if a different sequencing platform is used or bins are changed in future RTA updates.
+
+```{r binnedvalues}
+
+miseqBinnedErrfun <- makeBinnedQualErrfun(c(2, 9, 23, 38))
+
+```
+
+```{r learn_errors, eval = TRUE}
+
+errFwd <- learnErrors(filtFwds, errorEstimationFunction = miseqBinnedErrfun,
+                      multithread = TRUE, randomize = TRUE)
+
+errRev <- learnErrors(filtRevs, errorEstimationFunction = miseqBinnedErrfun,
+                      multithread = TRUE, randomize = TRUE)
+
+# save objects to files
+saveRDS(errFwd, "results/errFwd.rds")
+saveRDS(errRev, "results/errRev.rds")
+
+```
+
+Visualise the learned error rates. The estimated error rates (black line) should follow the observed error frequencies (points) and decrease monotonically with increasing quality score. Poor model fit suggests that the error learning step should be re-run with more reads or that the quality score binning values need adjustment.
+
+```{r plot_errors, fig.dim = c(12,20)}
+
+errFwd <- readRDS("results/errFwd.rds")
+
+# Plot error rate profile for forward reads
+plot_fwd <- plotErrors(errFwd, nominalQ=TRUE) + ggtitle ("Forward") +
+    theme_ipsum_rc(base_size = 18)
+
+errRev <- readRDS("results/errRev.rds")
+
+# Plot error rate profile for reverse reads
+plot_rev <- plotErrors(errRev, nominalQ=TRUE) + ggtitle("Reverse") +
+        theme_ipsum_rc(base_size = 18)
+
+plot_fwd/plot_rev
+
+```
+
+#### Denoise reads
+
+The core DADA2 step. The algorithm uses the learned error model to infer the true biological sequences underlying the observed reads, correcting sequencing errors and resolving sequences that differ by as little as one nucleotide. Output is a list of denoised objects, one per sample, for each read direction.
+
+```{r denoise, eval = TRUE}
+
+# Denoise both forward and reverse reads using error rate profiles
+dadaFwds <- dada(filtFwds, err = errFwd, multithread = TRUE)
+dadaRevs <- dada(filtRevs, err = errRev, multithread = TRUE)
+
+# Save objects to files
+saveRDS(dadaFwds, "results/dadaFwds.rds")
+saveRDS(dadaRevs, "results/dadaRevs.rds")
+
+```
+
+#### Merge reads
+
+Denoised forward and reverse reads are merged into full-length amplicon sequences. Only read pairs that overlap perfectly (no mismatches in the overlap region by default) are retained. Merging failure — where many reads do not merge — usually indicates insufficient overlap due to truncation lengths that are too aggressive.
+
+```{r merge_paired, eval = TRUE}
+
+dadaFwds <- readRDS("results/dadaFwds.rds")
+dadaRevs <- readRDS("results/dadaRevs.rds")
+
+# Merge denoised paired-end reads
+merged <- mergePairs(dadaFwds, filtFwds, dadaRevs, filtRevs, verbose = TRUE,
+                     trimOverhang = isTRUE(cfg$allow_overhang))
+
+# Save object to a file
+saveRDS(merged, "results/merged.rds")
+
+```
+
+#### Build ASV table
+
+Merged sequences from all samples are combined into a sample-by-sequence count matrix. Each unique sequence is an ASV (Amplicon Sequence Variant). The length distribution of ASVs should be inspected to confirm that merging produced sequences of the expected amplicon length.
+
+```{r ASV}
+
+merged <- readRDS("results/merged.rds")
+
+# Create sequence table. Rownames are sequences, colnames samples
+seqtab <- makeSequenceTable(merged)
+
+# Dimensions of ASV table
+dim(seqtab)
+
+```
+
+Chimeric sequences are artefacts formed when an incomplete PCR extension product primes on a different template, producing a hybrid sequence that is not present in the original sample. `removeBimeraDenovo` detects these by checking whether each ASV can be reconstructed from two more abundant parent sequences. In a typical 16S dataset, chimeras can account for a substantial fraction of unique sequences but a small fraction of total reads.
+
+```{r chimera_removal, eval = TRUE}
+
+# Remove chimeras
+seqtab.nochim <- removeBimeraDenovo(seqtab, method = "consensus",
+                                    multithread = TRUE, verbose = TRUE)
+
+# Dimensions
+dim(seqtab.nochim)
+
+# Save object to file
+saveRDS(seqtab.nochim, "results/seqtabnochim.rds")
+
+```
+
+Inspect the distribution of merged ASV lengths. Note that each bar represents the number of unique sequences at that length, not read counts. A tight distribution around the expected amplicon length confirms clean merging. When studying a different amplicon target, adjust `xlim` to match the expected length range.
+
+```{r plot_ASV_length, fig.dim = c(8,6)}
+
+seqtab.nochim <- readRDS("results/seqtabnochim.rds")
+
+# Inspect sequence length distributions
+asv_lengths <- data.frame(length = nchar(colnames(seqtab.nochim)))
+
+# Plot histogram
+ggplot(asv_lengths, aes(x = length)) +
+  geom_histogram(binwidth = 1, fill = theme_colors$primary) +
+  labs(title = "ASV length Distribution",
+       x = "Merged Length (nt)",
+       y = "Frequency") + xlim(50,600) +
+  theme_ipsum_rc(base_size = 14)
+
+```
+
+#### Denoising summary
+
+Track read counts through each processing step to identify where reads are lost. Large drops at the filtering step suggest truncation lengths may be too strict. Large drops at merging indicate insufficient overlap. A high chimera fraction can point to primer dimer contamination or poor library quality, but can also occur in samples with low community richness and high sequencing depth — with few unique templates being amplified intensively, the probability of chimera formation during PCR increases.
+
+```{r summary}
+
+# Read all objects from files
+out <- readRDS("results/out.rds")
+dadaFwds <- readRDS("results/dadaFwds.rds")
+dadaRevs <- readRDS("results/dadaRevs.rds")
+merged <- readRDS("results/merged.rds")
+seqtab.nochim <- readRDS("results/seqtabnochim.rds")
+
+all_samples <- readRDS("results/all_samples.rds")
+
+# Get values for each sample
+getN <- function(x) sum(getUniques(x))
+
+# Place values of retained samples into a vector covering all samples.
+# Samples removed after filtering get 0
+fill_all <- function(values) {
+  v <- setNames(numeric(length(all_samples)), all_samples)
+  v[sample.names] <- values
+  v
+}
+
+track <- cbind(out[all_samples, , drop = FALSE],
+               fill_all(sapply(dadaFwds, getN)),
+               fill_all(sapply(dadaRevs, getN)),
+               fill_all(sapply(merged, getN)),
+               fill_all(rowSums(seqtab.nochim)),
+               fill_all(rowSums(seqtab.nochim != 0)))
+
+# If processing a single sample, remove the sapply calls: e.g.
+# replace sapply(dadaFs, getN) with getN(dadaFs)
+
+# Replace column names
+colnames(track) <- c("Input", "Filtered", "DenoisedF", "DenoisedR",
+                     "Merged", "Non-chimeric","Variants")
+
+# Mark samples removed due to zero reads after filtering
+track <- data.frame(track, check.names = FALSE)
+track$Removed <- ifelse(rownames(track) %in% sample.names, "", "yes")
+
+# Table
+kable(track, format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover")) %>%
+  row_spec(0, background = theme_colors$primary, color = "white")
+
+```
+
+#### Assign taxonomy
+
+ASVs are classified with a naive Bayesian classifier against the reference database set in the amplicon settings: SILVA for 16S targets and UNITE for ITS targets. Classification is performed with `assignTaxonomy`. For 16S targets, it is followed by exact-match species assignment with `addSpecies`. Species assignment is run in chunks to avoid memory issues with large ASV tables — unassigned ASVs at species level are expected and normal.
+
+```{r taxonomy}
+#| eval: !expr cfg$assign_taxonomy
+
+seqtab.nochim <- readRDS("results/seqtabnochim.rds")
+
+# Assign taxa up to genus level
+taxa <- assignTaxonomy(seqtab.nochim, cfg$ref_db, multithread = TRUE)
+
+saveRDS(taxa, "results/taxa.rds")
+
+```
+
+Species assignment is executed only for bacterial targets.
+
+```{r species}
+#| eval: !expr cfg$assign_species
+
+taxa <- readRDS("results/taxa.rds")
+
+# Keep genus-level ranks only, in case species were already added in an earlier run
+taxa <- taxa[, 1:6, drop = FALSE]
+
+chunk_size <- 3000
+
+n_total <- nrow(taxa)
+
+n_chunks <- ceiling(n_total / chunk_size)
+
+cat("Processing", n_total, "taxa in", n_chunks, "chunks of", chunk_size, "\n")
+
+# ---- First chunk (to detect structure) ----
+first_end <- min(chunk_size, n_total)
+cat("▶️ Pre-scanning first chunk to set structure\n")
+taxa_first <- taxa[1:first_end, , drop = FALSE]
+taxa_first_species <- addSpecies(taxa_first, cfg$species_db)
+
+# Create empty output matrix with same structure as full addSpecies() output
+taxa_species <- matrix(NA_character_, nrow = n_total,
+                       ncol = ncol(taxa_first_species))
+colnames(taxa_species) <- colnames(taxa_first_species)
+rownames(taxa_species) <- rownames(taxa)
+
+# Insert first chunk results
+taxa_species[rownames(taxa_first_species), ] <- taxa_first_species
+
+# ---- Remaining chunks ----
+if (n_chunks > 1) {
+  for (i in 2:n_chunks) {
+    start <- (i - 1) * chunk_size + 1
+    end <- min(i * chunk_size, n_total)
+    cat("▶️ Chunk", i, ":", start, "-", end, "\n")
+
+    taxa_chunk <- taxa[start:end, , drop = FALSE]
+
+    taxa_chunk_species <- tryCatch({
+      addSpecies(taxa_chunk, cfg$species_db)
+    }, error = function(e) {
+      cat("⚠️ Error in chunk", i, ":", conditionMessage(e),
+          "\nReturning original chunk\n")
+      return(taxa_chunk)
+    })
+
+    taxa_species[rownames(taxa_chunk_species),
+                 colnames(taxa_chunk_species)] <- taxa_chunk_species
+  }
+}
+
+cat("✅ Species assignment finished successfully.\n")
+
+saveRDS(taxa_species, "results/taxa.rds")
+```
+
+#### TreeSummarizedExperiment object
+
+All data — count matrix, taxonomy table, sample metadata, and representative sequences — are assembled into a `TreeSummarizedExperiment` (TSE) object. This is the primary data structure for downstream analysis with the `mia` ecosystem. Additionally, non-target sequences (non-bacterial/archaeal kingdoms, non-fungal, mitochondria, and chloroplasts) and taxon prefixes are stripped at this stage, if removal is set in the amplicon parameters.
+
+```{r tse, eval = TRUE}
+
+seqtab.nochim <- readRDS("results/seqtabnochim.rds")
+
+# Set representative sequences
+repseq <- DNAStringSet(colnames(seqtab.nochim))
+
+# Read and modify taxonomy table
+has_taxonomy <- cfg$assign_taxonomy && file.exists("results/taxa.rds")
+
+if (has_taxonomy) {
+  taxa <- readRDS("results/taxa.rds")
+  rownames(taxa) <- paste0("ASV", seq(nrow(taxa)))
+  base_ranks <- c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus")
+  colnames(taxa) <- if (ncol(taxa) == 7) c(base_ranks, "Species") else base_ranks
+}
+
+# Modify counts table
+assay_data <- seqtab.nochim
+colnames(assay_data) <- paste0("ASV", seq(ncol(assay_data)))
+
+# Sample names come from the read file names; metadata is matched to them below
+rownames(assay_data) <- sample.names
+assay_data <- t(assay_data)
+
+# Stop if any sequenced sample is missing from the metadata
+meta_idx <- match(colnames(assay_data), rownames(samples_meta))
+if (anyNA(meta_idx)) {
+  stop("Samples missing from metadata.tsv: ",
+       paste(colnames(assay_data)[is.na(meta_idx)], collapse = ", "))
+}
+
+# Reorder metadata rows to match assay data column order if necessary
+samples_meta <- samples_meta[meta_idx, , drop = FALSE]
+
+# Tse object
+tse <- if (has_taxonomy) {
+  TreeSummarizedExperiment(assays = list(counts = assay_data),
+                            rowData = taxa,
+                            colData = samples_meta)
+} else {
+  TreeSummarizedExperiment(assays = list(counts = assay_data),
+                            colData = samples_meta)
+}
+
+referenceSeq(tse) <- repseq
+
+# Filter 16S data
+if (has_taxonomy && cfg$type == "16S") {
+  # Select only bacterial and archaea asvs
+  tse <- tse[rowData(tse)$Kingdom %in% c("Bacteria", "Archaea"), ]
+  # Filter mitochondria, keep empty at family level
+  tse <- tse[!rowData(tse)$Family %in% "Mitochondria" | is.na(rowData(tse)$Family), ]
+  # Filter chloroplast, keep empty at order level
+  tse <- tse[!rowData(tse)$Order %in% "Chloroplast" | is.na(rowData(tse)$Order), ]
+}
+
+# Strip fungal rank prefixes from taxonomy
+if (has_taxonomy && cfg$strip_prefix) {
+  rowData(tse) <- DataFrame(
+    data.frame(rowData(tse)) %>%
+      mutate(across(everything(), ~ str_remove(., "^[a-z]__")))
+  )
+}
+
+# Filter ITS data
+if (has_taxonomy && cfg$type == "ITS") {
+  tse <- tse[rowData(tse)$Kingdom %in% "Fungi", ]
+}
+
+# Save the object
+saveRDS(tse, "results/tse.rds")
+
+```
+
+#### Build phylogenetic tree from ASV variants
+
+Tree building is enabled with `create_tree` in the amplicon settings (16S targets). Representative sequences are aligned with MAFFT, a tree is built with FastTree, midpoint rooted and added to the TSE object.
+
+```{r phylo_tree_function}
+#| eval: !expr isTRUE(cfg$create_tree)
+#
+# Uses the widely-accepted MAFFT alignment and FastTree2 combination,
+# and applies a midpoint root before adding the tree into the TSE object.
+# Designed to scale efficiently to large data sets
+#' @param tse A TreeSummarizedExperiment object.
+#' @param threads Integer. Number of threads to use for MAFFT alignment (default: 1).
+#'        FastTree is run single-threaded, since it is fast enough without
+#'        parallelism and threading only takes effect with OpenMP-enabled
+#'        FastTree builds (e.g. FastTreeMP), which cannot be assumed present.
+#' @param mafft_args Character arguments to MAFFT.
+#'        Default "--auto --parttree"
+#' @param fasttree_args Character. Arguments for FastTree. 
+#'        Default "-nt -gtr -gamma" (nucleotide, GTR+Gamma model).
+#' @param seq_accessor Function. Used to extract sequences from the TSE. 
+#'        Default is `TreeSummarizedExperiment::referenceSeq`. If you use a custom 
+#'        accessor like `repseq`, pass it here (e.g. `seq_accessor = repseq`).
+#' @param verbose Logical. If TRUE, prints progress.
+#' @return A TreeSummarizedExperiment object with `rowTree` updated.
+#' @export
+
+add_phylotree_to_tse <- function(tse, 
+                                 threads = 1,
+                                 mafft_args = "--auto --parttree",
+                                 fasttree_args = "-nt -gtr -gamma",
+                                 seq_accessor = TreeSummarizedExperiment::referenceSeq,
+                                 verbose = TRUE) {
+    
+    # 1. Extract sequences
+    if (verbose) message("1. Extracting sequences from TSE...")
+    seqs <- seq_accessor(tse)
+    
+    if (is.null(seqs) || length(seqs) == 0) {
+        stop("No sequences found in TSE. Check seq_accessor function.")
+    }
+    
+    n_seqs <- length(seqs)
+    if (verbose) message(sprintf("   Found %d sequences.", n_seqs))
+    
+    # 2. Check for dependencies
+    
+    if (Sys.which("mafft") == "") stop("mafft is not found in PATH.")
+    fasttree_bin <- ifelse(Sys.which("FastTree") != "", "FastTree", 
+                           ifelse(Sys.which("fasttree") != "", "fasttree", ""))
+    if (fasttree_bin == "") stop("FastTree is not found in PATH.")
+    
+    # 3. Setup tmp files
+    
+    tmp_dir <- tempdir()
+    fasta_in  <- tempfile(pattern = "seqs_", tmpdir = tmp_dir, fileext = ".fasta")
+    fasta_out <- tempfile(pattern = "aln_", tmpdir = tmp_dir, fileext = ".fasta")
+    tree_out  <- tempfile(pattern = "tree_", tmpdir = tmp_dir, fileext = ".nwk")
+    on.exit(unlink(c(fasta_in, fasta_out, tree_out)))
+    
+    Biostrings::writeXStringSet(seqs, filepath = fasta_in)
+    
+    # 4. MAFFT alignment
+    
+    if (verbose) message("2. Running MAFFT alignment...")
+    
+    mafft_cmd <- sprintf("mafft --thread %d %s %s > %s", 
+                         threads, mafft_args, shQuote(fasta_in), shQuote(fasta_out))
+    
+    if (verbose) message("   Command: ", mafft_cmd)
+    res_mafft <- system(mafft_cmd, intern = FALSE, ignore.stdout = FALSE, ignore.stderr = !verbose)
+    
+    if (res_mafft != 0 || !file.exists(fasta_out) || file.info(fasta_out)$size == 0) {
+        stop("MAFFT alignment failed.")
+    }
+    
+    # 5. FastTree
+    
+    if (verbose) message("3. Running FastTree...")
+    
+    fasttree_cmd <- sprintf("%s %s %s > %s", 
+                            fasttree_bin, fasttree_args, shQuote(fasta_out), shQuote(tree_out))
+    
+    if (verbose) message("   Command: ", fasttree_cmd)
+    res_fasttree <- system(fasttree_cmd, intern = FALSE, ignore.stdout = FALSE, ignore.stderr = !verbose)
+    
+    if (res_fasttree != 0 || !file.exists(tree_out) || file.info(tree_out)$size == 0) {
+        stop("FastTree failed.")
+    }
+    
+    # 6. Load tree, clamp artifacts, then root
+    if (verbose) message("4. Reading tree and applying midpoint rooting...")
+    tree <- ape::read.tree(tree_out)
+    
+    if (is.null(tree)) stop("Failed to read tree file.")
+    
+    # FastTree can produce extremely small negative branch lengths due to
+    # heuristics/rounding; clamp BEFORE rooting so root placement isn't
+    # distorted by negative path lengths.
+    neg_branches <- sum(tree$edge.length < 0, na.rm = TRUE)
+    if (neg_branches > 0) {
+        max_neg <- min(tree$edge.length, na.rm = TRUE)
+        if (verbose) {
+            message(sprintf("   Clamping %d negative branch length(s) to 0 (most negative: %.6g).",
+                            neg_branches, max_neg))
+        }
+        if (abs(max_neg) > 0.01) {
+            warning(sprintf(
+                "Largest negative branch length (%.4g) is unusually large — may indicate a tree/alignment quality issue rather than numerical noise.",
+                max_neg))
+        }
+        tree$edge.length[tree$edge.length < 0] <- 0
+    }
+    
+    tree <- phangorn::midpoint(tree)
+    tree <- ape::ladderize(tree)
+    
+    # 7. Attach tree to TSE
+    
+    if (verbose) message("5. Attaching tree to TSE...")
+    TreeSummarizedExperiment::rowTree(tse) <- tree
+    
+    if (verbose) message("Pipeline complete!")
+    return(tse)
+}
+```
+
+```{r phylo_tree}
+#| eval: !expr isTRUE(cfg$create_tree)
+
+tse <- add_phylotree_to_tse(tse, threads = 4)
+```
+
+#### Write final object into files
+
+Samples with zero total counts are removed before export. The TSE object is saved as an RDS file for use in downstream analysis scripts. Flat-file exports (taxonomy, an ASV count table, metadata, and representative sequences as FASTA) are written for compatibility with other tools.
+
+```{r write_files, eval = TRUE}
+
+# Include only samples that have counts
+
+tse <- tse[, colSums(assay(tse)) > 0]
+
+# Save object
+saveRDS(tse, "results/tse.rds")
+
+# Save representative sequences as fasta
+tse %>% referenceSeq() %>% 
+  writeXStringSet("results/repseq.fasta",
+                  append = FALSE, compress = FALSE, format = "fasta")
+
+# Save taxonomy table as tsv
+
+if (has_taxonomy) {
+taxfile <- as.data.frame(rowData(tse))
+taxfile %>% rownames_to_column(var = "Variant") %>% 
+  write_tsv(file = "results/taxonomy.tsv")
+}
+
+# Save abundance table as tsv
+ASV_counts <- as.data.frame(assays(tse)$counts)
+ASV_counts %>% rownames_to_column(var= "Variant") %>%
+write_tsv(file = "results/asv_table.tsv")
+
+# Save metadata as tsv
+metadf <- data.frame(SampleID = rownames(colData(tse)), colData(tse))
+write_tsv(metadf, "results/metadata.tsv")
+
+```
+
+#### Example analysis
+
+Beta diversity describes differences in community composition between samples. Bray-Curtis dissimilarity is calculated on relative abundances and ordinated with PCoA (Principal Coordinates Analysis). Samples with similar microbial communities will cluster together in the ordination plot.
+
+```{r beta_diversity, fig.dim = c(8,8), eval = TRUE}
+
+# Metadata column used for grouping in the example plots. Change to match your metadata
+group_var <- "Sample_type"
+
+tse <- transformAssay(
+    tse, assay.type = "counts", method = "relabundance")
+
+# Run PCoA on relabundance assay with Bray-Curtis distances
+tse <- runMDS(tse, FUN = getDissimilarity,
+              method = "bray", assay.type = "relabundance",
+              name = "MDS_bray")
+
+# Create ggplot object
+bplot <- plotReducedDim(tse, "MDS_bray", colour_by = group_var)
+
+# Calculate explained variance
+e <- attr(reducedDim(tse, "MDS_bray"), "eig")
+rel_eig <- e / sum(e[e > 0])
+
+# Adjust plot object
+bplot <- bplot + labs(
+    x = paste("PCoA 1 (", round(100 * rel_eig[[1]], 1), "%", ")", sep = ""),
+    y = paste("PCoA 2 (", round(100 * rel_eig[[2]], 1), "%", ")", sep = ""),
+    colour = group_var) +
+  theme_ipsum_rc(base_size=12)
+  
+bplot$scales$scales <- list()
+
+bplot$layers[[1]]$aes_params$size <- 3
+
+bplot + scale_color_calc()
+
+```
+
+The PCoA plot is coloured by the selected grouping variable. The percentage of variance explained by each axis is shown on the axis labels.
+
+Alpha diversity quantifies species richness and evenness within each sample. Shannon index accounts for both the number of ASVs and their relative abundances — higher values indicate more diverse and evenly distributed communities.
+
+```{r shannon, eval = TRUE}
+
+# Calculate alpha and create df
+tse <- addAlpha(tse, assay.type = "counts",
+                index = "shannon_diversity")
+
+alpha_table <- data.frame(Sample = rownames(colData(tse)),
+                          Shannon = colData(tse)$shannon_diversity)
+
+kable(alpha_table, digits = 2, caption = "Shannon diversity",
+      format = "html") %>% 
+  kable_styling(bootstrap_options = c("striped", "hover")) %>%
+  row_spec(0, background = theme_colors$primary, color = "white")
+
+```
+
+Boxplot of Shannon diversity grouped by the selected grouping variable. Individual sample points are overlaid to show within-group variation.
+
+```{r boxplot, fig.dim = c(7,7), eval = TRUE}
+
+# Plot boxplot
+ggplot(as.data.frame(colData(tse)),
+       aes(x = .data[[group_var]], y = shannon_diversity,
+           fill = .data[[group_var]])) + geom_boxplot() +
+  geom_jitter(width = 0.15, size = 2, alpha = 0.7) +
+  theme_ipsum_rc(base_size = 14) +
+  labs(
+    x = group_var,
+    y = "Shannon Diversity",
+    title = paste("Shannon diversity by", group_var)
+  ) + theme(legend.position = "none") + scale_fill_calc()
+
+```
+
+#### Session info
+
+```{r session_info}
+
+sessioninfo::session_info()
+```
