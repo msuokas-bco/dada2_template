@@ -30,5 +30,5 @@ echo
 echo "Next steps:"
 echo "  1. Copy metadata.tsv into the project root (needs a 'sampleid' column)"
 echo "  2. Copy the demultiplexed FASTQ files into reads/"
-echo "  3. Edit group_var in the example analysis to match your metadata"
-echo "  4. quarto render $qmd -P amplicon:<target>"
+echo "  3. quarto render $qmd -P amplicon:<target> [-P group:<metadata column>]"
+echo "     (without group, the example analysis is skipped)"

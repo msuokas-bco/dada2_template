@@ -6,3 +6,5 @@ reads/
 results/
 *.html
 *_files/
+!testdata/*/reads/
+.DS_Store

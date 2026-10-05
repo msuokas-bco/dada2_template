@@ -1,7 +1,7 @@
 ---
 title: "Dada2 pipeline for amplicon sequences"
 subtitle: "Template version {{< meta version >}}"
-version: "1.0"
+version: "1.1"
 author:
     name: "Marko Suokas"
     affiliation: "BCO Sequencing Center"
@@ -13,6 +13,7 @@ format:
     code-summary: "Show code"
 params:
   amplicon: "REQUIRED"
+  group: ""
 editor: visual
 ---
 
@@ -79,9 +80,9 @@ The workflow is adapted from the "Dada2 pipeline guide" and the "Bioconductor Wo
 
 The template requires a metadata file in TSV format (with a minimum of two columns of information) in the root directory and a demultiplexed FASTQ dataset in the reads subdirectory. Confirm the location and the naming of the taxonomy reference files. The simplest way to execute the template is to render the file with Quarto via the command line with the amplicon parameter. For example:
 
-`quarto render dada2_template.qmd -P amplicon:16SV4`
+`quarto render dada2_template.qmd -P amplicon:16SV4 -P group:Sample_type`
 
-Please note that the example analysis will require you to change variables to correspond to your project metadata. Alternatively, you can disable the execution of code chunks with the eval = FALSE statement.
+The optional group parameter names the metadata column used for grouping in the example analysis. The column must contain categories shared by several samples. If the parameter is omitted, the example analysis is skipped.
 
 The first step is setting global parameters and loading libraries.
 
@@ -210,6 +211,10 @@ Sys.setenv(FWD_PRIMER = paste(cfg$fwd, collapse = " "))
 Sys.setenv(REV_PRIMER = paste(cfg$rev, collapse = " "))
 Sys.setenv(MIN_LENGTH = cfg$min_length)
 
+# External tools (cutadapt, mafft, FastTree) live in this conda environment
+conda_bin <- path.expand("~/.miniconda3/envs/python-311/bin")
+if (dir.exists(conda_bin)) Sys.setenv(PATH = paste(conda_bin, Sys.getenv("PATH"), sep = ":"))
+
 # List of R libraries
 
 library(dada2)
@@ -241,6 +246,27 @@ samples_meta <- read_tsv(meta, col_types = setNames(list(col_character()), id_co
     rename(sampleid = all_of(id_col)) %>%
     column_to_rownames(var = "sampleid")
 
+# Grouping column for the example analysis (optional -P group:<column>)
+group_var <- params$group
+run_example <- !is.null(group_var) && nzchar(group_var)
+
+if (run_example) {
+  if (!group_var %in% names(samples_meta)) {
+    stop(sprintf("\n[FATAL ERROR]: Group column '%s' is not in metadata.tsv.\nAvailable columns are: %s\n",
+                 group_var, paste(names(samples_meta), collapse = ", ")))
+  }
+  # Group must hold categories shared by several samples, not IDs or measurements
+  n_levels <- length(unique(na.omit(samples_meta[[group_var]])))
+  if (n_levels < 2 || n_levels >= nrow(samples_meta)) {
+    stop(sprintf(paste0("\n[FATAL ERROR]: Group column '%s' has %d distinct values for %d samples.\n",
+                        "It must contain categories shared by several samples (at least two groups).\n"),
+                 group_var, n_levels, nrow(samples_meta)))
+  }
+  message("Example analysis grouped by: ", group_var, " (", n_levels, " groups)")
+} else {
+  message("No group parameter given; example analysis skipped")
+}
+
 #Create directories inside project unless they exist
 dir.create("results", showWarnings = FALSE)
 dir.create("reads/trimmed", recursive = TRUE, showWarnings = FALSE)
@@ -266,7 +292,7 @@ PCR primers must be removed before denoising — any remaining primer sequence w
 ```{bash trim_primers, eval = TRUE}
 
 source ~/.miniconda3/etc/profile.d/conda.sh
-conda activate base
+conda activate python-311
 
 # Define input and output directories
 indir="reads"           # directory containing your R1 and R2 fastq.gz files
@@ -323,12 +349,12 @@ list.files("reads/trimmed")
 
 # Forward read names: SAMPLENAME_PATTERN
 fnFwds <- sort(list.files("reads/trimmed",
-                          pattern = "_L001_R1_trimmed.fastq.gz",
+                          pattern = "_R1_trimmed\\.fastq\\.gz$",
                           full.names = TRUE))
 
 # Reverse read names: SAMPLENAME_PATTERN
 fnRevs <- sort(list.files("reads/trimmed",
-                          pattern = "_L001_R2_trimmed.fastq.gz",
+                          pattern = "_R2_trimmed\\.fastq\\.gz$",
                           full.names = TRUE))
 
 # Extract sample names to the list
@@ -539,7 +565,7 @@ saveRDS(seqtab.nochim, "results/seqtabnochim.rds")
 
 ```
 
-Inspect the distribution of merged ASV lengths. Note that each bar represents the number of unique sequences at that length, not read counts. A tight distribution around the expected amplicon length confirms clean merging. When studying a different amplicon target, adjust `xlim` to match the expected length range.
+Inspect the distribution of merged ASV lengths. Note that each bar represents the number of unique sequences at that length, not read counts. A tight distribution around the expected amplicon length confirms clean merging. The x-axis covers the observed ASV length range plus 50 nt on each side, so it adapts to any amplicon target.
 
 ```{r plot_ASV_length, fig.dim = c(8,6)}
 
@@ -548,12 +574,15 @@ seqtab.nochim <- readRDS("results/seqtabnochim.rds")
 # Inspect sequence length distributions
 asv_lengths <- data.frame(length = nchar(colnames(seqtab.nochim)))
 
+# Axis covers the observed ASV lengths plus 50 nt on each side
+len_range <- range(asv_lengths$length) + c(-50, 50)
+
 # Plot histogram
 ggplot(asv_lengths, aes(x = length)) +
   geom_histogram(binwidth = 1, fill = theme_colors$primary) +
   labs(title = "ASV length Distribution",
        x = "Merged Length (nt)",
-       y = "Frequency") + xlim(50,600) +
+       y = "Frequency") + coord_cartesian(xlim = len_range) +
   theme_ipsum_rc(base_size = 14)
 
 ```
@@ -643,41 +672,29 @@ n_chunks <- ceiling(n_total / chunk_size)
 
 cat("Processing", n_total, "taxa in", n_chunks, "chunks of", chunk_size, "\n")
 
-# ---- First chunk (to detect structure) ----
-first_end <- min(chunk_size, n_total)
-cat("▶️ Pre-scanning first chunk to set structure\n")
-taxa_first <- taxa[1:first_end, , drop = FALSE]
-taxa_first_species <- addSpecies(taxa_first, cfg$species_db)
-
 # Create empty output matrix with same structure as full addSpecies() output
 taxa_species <- matrix(NA_character_, nrow = n_total,
-                       ncol = ncol(taxa_first_species))
-colnames(taxa_species) <- colnames(taxa_first_species)
+                       ncol = ncol(taxa) + 1)
+colnames(taxa_species) <- c(colnames(taxa), "Species")
 rownames(taxa_species) <- rownames(taxa)
 
-# Insert first chunk results
-taxa_species[rownames(taxa_first_species), ] <- taxa_first_species
+for (i in seq_len(n_chunks)) {
+  start <- (i - 1) * chunk_size + 1
+  end <- min(i * chunk_size, n_total)
+  cat("▶️ Chunk", i, ":", start, "-", end, "\n")
 
-# ---- Remaining chunks ----
-if (n_chunks > 1) {
-  for (i in 2:n_chunks) {
-    start <- (i - 1) * chunk_size + 1
-    end <- min(i * chunk_size, n_total)
-    cat("▶️ Chunk", i, ":", start, "-", end, "\n")
+  taxa_chunk <- taxa[start:end, , drop = FALSE]
 
-    taxa_chunk <- taxa[start:end, , drop = FALSE]
+  taxa_chunk_species <- tryCatch({
+    addSpecies(taxa_chunk, cfg$species_db)
+  }, error = function(e) {
+    cat("⚠️ Error in chunk", i, ":", conditionMessage(e),
+        "\nReturning original chunk\n")
+    return(taxa_chunk)
+  })
 
-    taxa_chunk_species <- tryCatch({
-      addSpecies(taxa_chunk, cfg$species_db)
-    }, error = function(e) {
-      cat("⚠️ Error in chunk", i, ":", conditionMessage(e),
-          "\nReturning original chunk\n")
-      return(taxa_chunk)
-    })
-
-    taxa_species[rownames(taxa_chunk_species),
-                 colnames(taxa_chunk_species)] <- taxa_chunk_species
-  }
+  taxa_species[rownames(taxa_chunk_species),
+               colnames(taxa_chunk_species)] <- taxa_chunk_species
 }
 
 cat("✅ Species assignment finished successfully.\n")
@@ -701,6 +718,10 @@ has_taxonomy <- cfg$assign_taxonomy && file.exists("results/taxa.rds")
 
 if (has_taxonomy) {
   taxa <- readRDS("results/taxa.rds")
+  # Stop if taxa.rds is left over from a run with a different ASV table
+  if (!identical(rownames(taxa), colnames(seqtab.nochim))) {
+    stop("taxa.rds does not match seqtabnochim.rds. Re-run the taxonomy chunks.")
+  }
   rownames(taxa) <- paste0("ASV", seq(nrow(taxa)))
   base_ranks <- c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus")
   colnames(taxa) <- if (ncol(taxa) == 7) c(base_ranks, "Species") else base_ranks
@@ -935,12 +956,15 @@ write_tsv(metadf, "results/metadata.tsv")
 
 #### Example analysis
 
+`r if (!run_example) "*Example analysis skipped: no grouping variable given (-P group:&lt;metadata column&gt;).*"`
+
 Beta diversity describes differences in community composition between samples. Bray-Curtis dissimilarity is calculated on relative abundances and ordinated with PCoA (Principal Coordinates Analysis). Samples with similar microbial communities will cluster together in the ordination plot.
 
-```{r beta_diversity, fig.dim = c(8,8), eval = TRUE}
+```{r beta_diversity, fig.dim = c(8,8)}
+#| eval: !expr run_example
 
-# Metadata column used for grouping in the example plots. Change to match your metadata
-group_var <- "Sample_type"
+# Grouping column comes from the group parameter; treat it as categorical
+colData(tse)[[group_var]] <- factor(colData(tse)[[group_var]])
 
 tse <- transformAssay(
     tse, assay.type = "counts", method = "relabundance")
@@ -976,7 +1000,8 @@ The PCoA plot is coloured by the selected grouping variable. The percentage of v
 
 Alpha diversity quantifies species richness and evenness within each sample. Shannon index accounts for both the number of ASVs and their relative abundances — higher values indicate more diverse and evenly distributed communities.
 
-```{r shannon, eval = TRUE}
+```{r shannon}
+#| eval: !expr run_example
 
 # Calculate alpha and create df
 tse <- addAlpha(tse, assay.type = "counts",
@@ -994,7 +1019,8 @@ kable(alpha_table, digits = 2, caption = "Shannon diversity",
 
 Boxplot of Shannon diversity grouped by the selected grouping variable. Individual sample points are overlaid to show within-group variation.
 
-```{r boxplot, fig.dim = c(7,7), eval = TRUE}
+```{r boxplot, fig.dim = c(7,7)}
+#| eval: !expr run_example
 
 # Plot boxplot
 ggplot(as.data.frame(colData(tse)),
