@@ -107,6 +107,7 @@ AMPLICON_REGISTRY <- list (
         species_db = "~/reference/silva_v138.2_assignSpecies.fa.gz",
         strip_prefix = FALSE,
         min_length = 200,
+        allow_overhang = FALSE,
         create_tree = TRUE),
     "16SV4" = list (
         fwd = "GTGYCAGCMGCCGCGGTAA",
@@ -119,6 +120,7 @@ AMPLICON_REGISTRY <- list (
         species_db = "~/reference/silva_v138.2_assignSpecies.fa.gz",
         strip_prefix = FALSE,
         min_length = 200,
+        allow_overhang = FALSE,
         create_tree = TRUE),
     "16SV4V5" = list (
         fwd = "GTGYCAGCMGCCGCGGTAA",
@@ -131,6 +133,7 @@ AMPLICON_REGISTRY <- list (
         species_db = "~/reference/silva_v138.2_assignSpecies.fa.gz",
         strip_prefix = FALSE,
         min_length = 200,
+        allow_overhang = FALSE,
         create_tree = TRUE),
     "ITS2" = list (
         fwd = "GTGARTCATCGARTCTTTG",
@@ -160,11 +163,12 @@ AMPLICON_REGISTRY <- list (
         fwd = "AAACTCGTGCCAGCCACC",
         rev = "GGGTATCTAATCCCAGTTTG",
         type = "12S",
-        truncLen = c(130,130),
+        truncLen = c(120,120),
         assign_taxonomy = FALSE,
         assign_species = FALSE,
         strip_prefix = FALSE,
         min_length = 100,
+        allow_overhang = FALSE,
         create_tree = FALSE),
     "ADCR2" = list (
         fwd = "TGAATGCTCTAGGACCACAC",
@@ -175,6 +179,7 @@ AMPLICON_REGISTRY <- list (
         assign_species = FALSE,
         strip_prefix = FALSE,
         min_length = 100,
+        allow_overhang = FALSE,
         create_tree = FALSE),
     "RBCL" = list (
         fwd = c("AGGTGAAGTAAAAGGTTCWTACTTAAA", "AGGTGAAGTTAAAGGTTCWTAYTTAAA",
@@ -186,6 +191,7 @@ AMPLICON_REGISTRY <- list (
         assign_species = FALSE,
         strip_prefix = FALSE,
         min_length = 200,
+        allow_overhang = FALSE,
         create_tree = FALSE)
     )
 
