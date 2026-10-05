@@ -1,7 +1,7 @@
 ---
 title: "Dada2 pipeline for amplicon sequences"
 subtitle: "Template version {{< meta version >}}"
-version: "1.1"
+version: "1.2"
 author:
     name: "Marko Suokas"
     affiliation: "BCO Sequencing Center"
@@ -793,7 +793,7 @@ saveRDS(tse, "results/tse.rds")
 
 #### Build phylogenetic tree from ASV variants
 
-Tree building is enabled with `create_tree` in the amplicon settings (16S targets). Representative sequences are aligned with MAFFT, a tree is built with FastTree, midpoint rooted and added to the TSE object.
+Tree building is enabled with `create_tree` in the amplicon settings (16S targets). Representative sequences are aligned with MAFFT, a tree is built with FastTree (the multithreaded FastTreeMP build is used when available), midpoint rooted and added to the TSE object.
 
 ```{r phylo_tree_function}
 #| eval: !expr isTRUE(cfg$create_tree)
@@ -803,9 +803,9 @@ Tree building is enabled with `create_tree` in the amplicon settings (16S target
 # Designed to scale efficiently to large data sets
 #' @param tse A TreeSummarizedExperiment object.
 #' @param threads Integer. Number of threads to use for MAFFT alignment (default: 1).
-#'        FastTree is run single-threaded, since it is fast enough without
-#'        parallelism and threading only takes effect with OpenMP-enabled
-#'        FastTree builds (e.g. FastTreeMP), which cannot be assumed present.
+#'        FastTree uses the OpenMP build FastTreeMP when it is found in PATH
+#'        (all cores by default, limit with OMP_NUM_THREADS), otherwise the
+#'        single-threaded FastTree.
 #' @param mafft_args Character arguments to MAFFT.
 #'        Default "--auto --parttree"
 #' @param fasttree_args Character. Arguments for FastTree. 
@@ -838,9 +838,11 @@ add_phylotree_to_tse <- function(tse,
     # 2. Check for dependencies
     
     if (Sys.which("mafft") == "") stop("mafft is not found in PATH.")
-    fasttree_bin <- ifelse(Sys.which("FastTree") != "", "FastTree", 
-                           ifelse(Sys.which("fasttree") != "", "fasttree", ""))
-    if (fasttree_bin == "") stop("FastTree is not found in PATH.")
+    # Prefer the multithreaded OpenMP build, fall back to single-threaded FastTree
+    fasttree_found <- Sys.which(c("FastTreeMP", "FastTree", "fasttree"))
+    fasttree_found <- fasttree_found[fasttree_found != ""]
+    if (length(fasttree_found) == 0) stop("FastTree is not found in PATH.")
+    fasttree_bin <- names(fasttree_found)[1]
     
     # 3. Setup tmp files
     
