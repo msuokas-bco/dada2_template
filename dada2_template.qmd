@@ -580,8 +580,9 @@ seqtab.nochim <- readRDS("results/seqtabnochim.rds")
 # Inspect sequence length distributions
 asv_lengths <- data.frame(length = nchar(colnames(seqtab.nochim)))
 
-# Axis covers the observed ASV lengths plus 50 nt on each side
-len_range <- range(asv_lengths$length) + c(-50, 50)
+# X-axis limits - filters extreme outliers and set xlim values plus minus 50 bp 
+q_limits <- quantile(asv_lengths$length, probs = c(0.001, 0.999))
+len_range <- c(floor(q_limits[1]) - 50, ceiling(q_limits[2]) + 50)
 
 # Plot histogram
 ggplot(asv_lengths, aes(x = length)) +
