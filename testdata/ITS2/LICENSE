@@ -1,0 +1,19 @@
+The data in this folder (metadata.tsv, truth.tsv, reads/) are synthetic reads
+simulated from ITS2 sequences extracted from the UNITE general FASTA release,
+dynamic species hypotheses:
+
+  Abarenkov K, Nilsson RH, Larsson KH, et al. (2024) The UNITE database for
+  molecular identification and taxonomic communication of fungi and other
+  eukaryotes: sequences, taxa and classifications reconsidered.
+  Nucleic Acids Res. 52:D791-D797. https://unite.ut.ee
+
+UNITE is licensed under the Creative Commons Attribution-ShareAlike 4.0
+International License (CC BY-SA 4.0). As a derivative work, this dataset is
+distributed under the same license:
+https://creativecommons.org/licenses/by-sa/4.0/
+
+Changes: a conserved 5' LSU segment up to the ITS4 primer site was appended
+to complete the amplicons, and synthetic paired-end reads with simulated
+sequencing errors were generated from them with testdata/simulate_reads.py.
+
+Copyright (c) 2026 Marko Suokas, University of Oulu (derived dataset)

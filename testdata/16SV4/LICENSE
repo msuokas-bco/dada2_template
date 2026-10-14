@@ -1,0 +1,17 @@
+The data in this folder (metadata.tsv, truth.tsv, reads/) are synthetic reads
+simulated from 16S rRNA sequences extracted in silico from the SILVA SSU Ref
+NR99 138.2 database:
+
+  Quast C, Pruesse E, Yilmaz P, et al. (2013) The SILVA ribosomal RNA gene
+  database project: improved data processing and web-based tools.
+  Nucleic Acids Res. 41:D590-D596. https://www.arb-silva.de
+
+SILVA is licensed under the Creative Commons Attribution 4.0 International
+License (CC BY 4.0). This derived dataset is distributed under the same
+license: https://creativecommons.org/licenses/by/4.0/
+
+Changes: sequences were trimmed to the 16S V4 amplicon, and synthetic
+paired-end reads with simulated sequencing errors were generated from them
+with testdata/simulate_reads.py.
+
+Copyright (c) 2026 Marko Suokas, University of Oulu (derived dataset)

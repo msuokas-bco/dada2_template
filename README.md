@@ -70,3 +70,9 @@ The reads are fully synthetic and contain no data from real samples. The 16S amp
 - Reference databases under `~/reference/` (SILVA 138.2 trainset and species file, UNITE general release)
 
 The template version is shown in the report subtitle.
+
+## License
+
+The code (`dada2_template.qmd`, `new_project.sh`, `testdata/simulate_reads.py`) is released under the [MIT License](LICENSE).
+
+The test datasets are derived from third-party databases and keep their licenses: `testdata/16SV4/` is under [CC BY 4.0](testdata/16SV4/LICENSE) (derived from SILVA) and `testdata/ITS2/` is under [CC BY-SA 4.0](testdata/ITS2/LICENSE) (derived from UNITE).
