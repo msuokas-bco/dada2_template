@@ -12,13 +12,21 @@ curl -fsSL https://raw.githubusercontent.com/msuokas-bco/dada2_template/main/ins
 
 The script:
 
-1. creates the `python-311` conda environment in `~/.miniconda3` with cutadapt, mafft and FastTree from conda-forge/bioconda (installs Miniforge into `~/.miniconda3` if it does not exist; an existing environment is updated)
+1. creates the `python-311` conda environment in `~/.miniconda3` with cutadapt, mafft and FastTree from conda-forge/bioconda (installs Miniforge into `~/.miniconda3` if it does not exist; missing tools are added to an existing environment)
 2. installs the missing R packages from CRAN and Bioconductor
-3. downloads the SILVA 138.2 DADA2 reference files into `~/reference/` and verifies their checksums
 
-The UNITE reference cannot be downloaded automatically. For ITS targets, get the UNITE general FASTA release (all eukaryotes, 19.02.2025) from [unite.ut.ee](https://unite.ut.ee/repository.php) and place `sh_general_release_dynamic_all_19.02.2025.fasta` in `~/reference/`.
+Steps can be skipped with `SKIP_CONDA=1` or `SKIP_R=1`, e.g. `... | SKIP_R=1 bash`. The script can be rerun safely; existing packages are kept.
 
-Steps can be skipped with `SKIP_CONDA=1`, `SKIP_R=1` or `SKIP_REF=1`, e.g. `... | SKIP_REF=1 bash`. The script can be rerun safely; existing packages and files are kept.
+## Reference databases
+
+Reference databases are not installed by the script. Download them manually into `~/reference/`:
+
+| Targets | Database | Files |
+|---|---|---|
+| `16SV3V4`, `16SV4`, `16SV4V5` | SILVA 138.2 formatted for DADA2 ([Zenodo](https://doi.org/10.5281/zenodo.14169026)) | `silva_nr99_v138.2_toGenus_trainset.fa.gz`, `silva_v138.2_assignSpecies.fa.gz` |
+| `ITS1`, `ITS2` | UNITE general FASTA release, all eukaryotes, 19.02.2025 ([unite.ut.ee](https://unite.ut.ee/repository.php)) | `sh_general_release_dynamic_all_19.02.2025.fasta` (decompressed) |
+
+The other targets (`12STELEO2`, `ADCR2`, `RBCL`) run without taxonomy assignment. To use another database or release, change `ref_db` and `species_db` in the amplicon registry of `dada2_template.qmd`.
 
 ## Start a new project
 
@@ -85,7 +93,7 @@ The reads are fully synthetic and contain no data from real samples. The 16S amp
 
 - R packages: dada2, mia, scater, vegan, Biostrings, tidyverse, ape, phangorn, kableExtra, patchwork, ggrepel, ggpubr, ggsci, bslib, sessioninfo
 - cutadapt, mafft and FastTree in the `python-311` conda environment (`~/.miniconda3/envs/python-311`); tools elsewhere on `PATH` are used as a fallback for mafft and FastTree, which are needed only for targets with tree building
-- Reference databases under `~/reference/` (SILVA 138.2 trainset and species file, UNITE general release)
+- Reference databases under `~/reference/` (see [Reference databases](#reference-databases))
 
 The template version is shown in the report subtitle.
 

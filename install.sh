@@ -3,20 +3,19 @@
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/msuokas-bco/dada2_template/main/install.sh | bash
 # Skip individual steps:
-#   ... | SKIP_CONDA=1 SKIP_R=1 SKIP_REF=1 bash
+#   ... | SKIP_CONDA=1 SKIP_R=1 bash
 #
 # Steps:
 #   1. conda environment 'python-311' in ~/.miniconda3 with cutadapt, mafft and FastTree
 #      (Miniforge is installed into ~/.miniconda3 if it does not exist)
 #   2. R packages from CRAN and Bioconductor (R itself must already be installed)
-#   3. SILVA 138.2 reference files into ~/reference/ (UNITE must be downloaded manually)
 # R and Quarto are not installed by this script; they are only checked.
+# Reference databases are downloaded manually (see README).
 
 set -euo pipefail
 
 conda_root="$HOME/.miniconda3"
 env_name="python-311"
-ref_dir="$HOME/reference"
 
 info() { echo "==> $*"; }
 warn() { echo "[WARNING] $*" >&2; }
@@ -45,7 +44,7 @@ if [[ "${SKIP_CONDA:-0}" != "1" ]]; then
     tools=(cutadapt mafft fasttree)
 
     if [[ -d "$conda_root/envs/$env_name" ]]; then
-        info "Updating conda environment '$env_name'"
+        info "Adding missing tools to conda environment '$env_name'"
         "$conda" install -y -n "$env_name" "${channels[@]}" "${tools[@]}"
     else
         info "Creating conda environment '$env_name'"
@@ -99,42 +98,6 @@ EOF
 fi
 
 # ---------------------------------------------------------------------------
-# 3. Reference databases
-# ---------------------------------------------------------------------------
-if [[ "${SKIP_REF:-0}" != "1" ]]; then
-    mkdir -p "$ref_dir"
-    # SILVA 138.2 formatted for DADA2 (https://doi.org/10.5281/zenodo.14169026)
-    silva_url="https://zenodo.org/records/14169026/files"
-    silva_files=(
-        "silva_nr99_v138.2_toGenus_trainset.fa.gz 1764e2a36b4500ccb1c7d5261948a414"
-        "silva_v138.2_assignSpecies.fa.gz 62fd939bd1aa9832d2089847f9f0b87d"
-    )
-    for entry in "${silva_files[@]}"; do
-        read -r file md5 <<< "$entry"
-        if [[ -s "$ref_dir/$file" ]]; then
-            info "$file already exists in $ref_dir"
-            continue
-        fi
-        info "Downloading $file"
-        curl -fL --retry 3 "$silva_url/$file?download=1" -o "$ref_dir/$file.part"
-        if command -v md5sum >/dev/null; then
-            got=$(md5sum "$ref_dir/$file.part" | cut -d' ' -f1)
-        else
-            got=$(md5 -q "$ref_dir/$file.part")
-        fi
-        [[ "$got" == "$md5" ]] || { rm -f "$ref_dir/$file.part"; die "Checksum mismatch for $file."; }
-        mv "$ref_dir/$file.part" "$ref_dir/$file"
-    done
-
-    unite="sh_general_release_dynamic_all_19.02.2025.fasta"
-    if [[ ! -s "$ref_dir/$unite" ]]; then
-        warn "UNITE reference for ITS targets is missing and cannot be downloaded automatically."
-        warn "Download the UNITE general FASTA release (all eukaryotes, 19.02.2025) from"
-        warn "https://unite.ut.ee/repository.php and place $unite in $ref_dir/"
-    fi
-fi
-
-# ---------------------------------------------------------------------------
 # Quarto check
 # ---------------------------------------------------------------------------
 if command -v quarto >/dev/null; then
@@ -144,5 +107,5 @@ else
 fi
 
 echo
-info "Done. Start a new project with:"
+info "Done. Download the reference databases into ~/reference/ (see README), then start a new project with:"
 echo "  curl -fsSL https://raw.githubusercontent.com/msuokas-bco/dada2_template/main/new_project.sh | bash"
