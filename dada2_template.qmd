@@ -231,13 +231,17 @@ library(tidyverse)
 library(ape)
 library(kableExtra)
 library(patchwork)
-library(ggthemes)
 library(ggrepel)
 library(ggpubr)
 library(ggsci)
-library(hrbrthemes)
 library(scater)
 library(sessioninfo)
+
+# Shared publication-style theme for all plots
+plot_theme <- function(base_size = 14) {
+  theme_pubr(base_size = base_size) +
+    theme(plot.title = element_text(face = "bold", hjust = 0))
+}
 
 # Read metadata file from root directory and set sampleID column as rownames
 meta <- "metadata.tsv"
@@ -391,8 +395,8 @@ Plot forward and reverse read qualities. Data can be used to evaluate proper tru
 qfwd <- readRDS("results/qfwd.rds")
 qrev <- readRDS("results/qrev.rds")
 
-qfwd <- qfwd + ggtitle("Forward reads") + theme_ipsum_rc(base_size = 18)
-qrev <- qrev + ggtitle("Reverse reads") + theme_ipsum_rc(base_size = 18)
+qfwd <- qfwd + ggtitle("Forward reads") + plot_theme(base_size = 18)
+qrev <- qrev + ggtitle("Reverse reads") + plot_theme(base_size = 18)
 
 qfwd + qrev
 
@@ -493,13 +497,13 @@ errFwd <- readRDS("results/errFwd.rds")
 
 # Plot error rate profile for forward reads
 plot_fwd <- plotErrors(errFwd, nominalQ=TRUE) + ggtitle ("Forward") +
-    theme_ipsum_rc(base_size = 18)
+    plot_theme(base_size = 18)
 
 errRev <- readRDS("results/errRev.rds")
 
 # Plot error rate profile for reverse reads
 plot_rev <- plotErrors(errRev, nominalQ=TRUE) + ggtitle("Reverse") +
-        theme_ipsum_rc(base_size = 18)
+        plot_theme(base_size = 18)
 
 plot_fwd/plot_rev
 
@@ -590,7 +594,8 @@ ggplot(asv_lengths, aes(x = length)) +
   labs(title = "ASV length Distribution",
        x = "Merged Length (nt)",
        y = "Frequency") + coord_cartesian(xlim = len_range) +
-  theme_ipsum_rc(base_size = 14)
+  scale_y_continuous(expand = expansion(mult = c(0, 0.05))) +
+  plot_theme(base_size = 14)
 
 ```
 
@@ -995,13 +1000,13 @@ bplot <- bplot + labs(
     x = paste("PCoA 1 (", round(100 * rel_eig[[1]], 1), "%", ")", sep = ""),
     y = paste("PCoA 2 (", round(100 * rel_eig[[2]], 1), "%", ")", sep = ""),
     colour = group_var) +
-  theme_ipsum_rc(base_size=12)
+  plot_theme(base_size = 12)
   
 bplot$scales$scales <- list()
 
 bplot$layers[[1]]$aes_params$size <- 3
 
-bplot + scale_color_calc()
+bplot + coord_equal() + scale_colour_npg()
 
 ```
 
@@ -1036,12 +1041,12 @@ ggplot(as.data.frame(colData(tse)),
        aes(x = .data[[group_var]], y = shannon_diversity,
            fill = .data[[group_var]])) + geom_boxplot() +
   geom_jitter(width = 0.15, size = 2, alpha = 0.7) +
-  theme_ipsum_rc(base_size = 14) +
+  plot_theme(base_size = 14) +
   labs(
     x = group_var,
     y = "Shannon Diversity",
     title = paste("Shannon diversity by", group_var)
-  ) + theme(legend.position = "none") + scale_fill_calc()
+  ) + theme(legend.position = "none") + scale_fill_npg()
 
 ```
 

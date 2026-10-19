@@ -2,6 +2,24 @@
 
 Quarto template for processing Illumina paired-end amplicon data with DADA2: primer trimming (cutadapt), filtering, denoising, merging, chimera removal, taxonomy assignment, an optional phylogenetic tree, and export into a `TreeSummarizedExperiment` object.
 
+## Install the environment
+
+[R](https://cran.r-project.org) and [Quarto](https://quarto.org/docs/get-started/) must be installed first. Then run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/msuokas-bco/dada2_template/main/install.sh | bash
+```
+
+The script:
+
+1. creates the `python-311` conda environment in `~/.miniconda3` with cutadapt, mafft and FastTree from conda-forge/bioconda (installs Miniforge into `~/.miniconda3` if it does not exist; an existing environment is updated)
+2. installs the missing R packages from CRAN and Bioconductor
+3. downloads the SILVA 138.2 DADA2 reference files into `~/reference/` and verifies their checksums
+
+The UNITE reference cannot be downloaded automatically. For ITS targets, get the UNITE general FASTA release (all eukaryotes, 19.02.2025) from [unite.ut.ee](https://unite.ut.ee/repository.php) and place `sh_general_release_dynamic_all_19.02.2025.fasta` in `~/reference/`.
+
+Steps can be skipped with `SKIP_CONDA=1`, `SKIP_R=1` or `SKIP_REF=1`, e.g. `... | SKIP_REF=1 bash`. The script can be rerun safely; existing packages and files are kept.
+
 ## Start a new project
 
 Create a project folder (e.g. an RStudio project), then run in its root:
@@ -65,7 +83,7 @@ The reads are fully synthetic and contain no data from real samples. The 16S amp
 
 ## Requirements
 
-- R packages: dada2, mia, scater, vegan, Biostrings, tidyverse, ape, phangorn, kableExtra, patchwork, ggthemes, ggrepel, ggpubr, ggsci, hrbrthemes, bslib, sessioninfo
+- R packages: dada2, mia, scater, vegan, Biostrings, tidyverse, ape, phangorn, kableExtra, patchwork, ggrepel, ggpubr, ggsci, bslib, sessioninfo
 - cutadapt, mafft and FastTree in the `python-311` conda environment (`~/.miniconda3/envs/python-311`); tools elsewhere on `PATH` are used as a fallback for mafft and FastTree, which are needed only for targets with tree building
 - Reference databases under `~/reference/` (SILVA 138.2 trainset and species file, UNITE general release)
 
@@ -73,6 +91,6 @@ The template version is shown in the report subtitle.
 
 ## License
 
-The code (`dada2_template.qmd`, `new_project.sh`, `testdata/simulate_reads.py`) is released under the [MIT License](LICENSE).
+The code (`dada2_template.qmd`, `new_project.sh`, `install.sh`, `testdata/simulate_reads.py`) is released under the [MIT License](LICENSE).
 
 The test datasets are derived from third-party databases and keep their licenses: `testdata/16SV4/` is under [CC BY 4.0](testdata/16SV4/LICENSE) (derived from SILVA) and `testdata/ITS2/` is under [CC BY-SA 4.0](testdata/ITS2/LICENSE) (derived from UNITE).
