@@ -1,7 +1,7 @@
 ---
 title: "Dada2 pipeline for amplicon sequences"
 subtitle: "Template version {{< meta version >}}"
-version: "1.2"
+version: "1.3"
 author:
     name: "Marko Suokas"
     affiliation: "BCO Sequencing Center"
@@ -31,14 +31,14 @@ if (is.list(theme_setting) || length(theme_setting) > 1) {
 
 # 2. Create a bslib theme object to extract variables
 if (is.null(theme_name) || theme_name == "default") {
-    t <- bs_theme(version = 5)
+    bs_t <- bs_theme(version = 5)
 } else {
-    t <- bs_theme(version = 5, bootswatch = theme_name)
+    bs_t <- bs_theme(version = 5, bootswatch = theme_name)
 }
 
 # 3. Helper to extract colors safely
 get_color <- function(var_name, fallback = "#000000") {
-  val <- bs_get_variables(t, var_name)
+  val <- bs_get_variables(bs_t, var_name)
   if (is.na(val)) return(fallback)
   return(unname(val))
 }
@@ -189,6 +189,7 @@ AMPLICON_REGISTRY <- list (
         truncLen = c(230,230),
         assign_taxonomy = TRUE,
         ref_db = "~/reference/diat_barcode_v15_2_tax_assign_dada2.fasta",
+        tax_ranks = 2:8,
         assign_species = FALSE,
         strip_prefix = FALSE,
         min_length = 200,
@@ -221,6 +222,9 @@ Sys.setenv(MIN_LENGTH = cfg$min_length)
 # External tools (cutadapt, mafft, FastTree) live in this conda environment
 conda_bin <- path.expand("~/.miniconda3/envs/python-311/bin")
 if (dir.exists(conda_bin)) Sys.setenv(PATH = paste(conda_bin, Sys.getenv("PATH"), sep = ":"))
+
+# Threads for dada2, MAFFT and FastTreeMP — two cores are left free
+n_threads <- max(1L, parallel::detectCores() - 2L, na.rm = TRUE)
 
 # List of R libraries
 
@@ -405,7 +409,7 @@ qfwd + qrev
 
 #### Filter and trim reads
 
-Reads are truncated to a fixed length and discarded if they contain ambiguous bases (`maxN=0`), exceed the maximum expected errors threshold (`maxEE=2`), or drop below quality score 2 (`truncQ=2`). Truncation lengths are set in the amplicon settings and should be chosen so that forward and reverse reads still overlap sufficiently for merging — typically at least 20 bp of overlap. PhiX reads are removed if `rm.phix = TRUE`.
+Reads are truncated at the first base with quality score 2 or lower (`truncQ=2`) and to a fixed length (`truncLen`). Reads are discarded if they become shorter than the truncation length, contain ambiguous bases (`maxN=0`), or exceed the maximum expected errors threshold (`maxEE=2`). Truncation lengths are set in the amplicon settings and should be chosen so that forward and reverse reads still overlap sufficiently for merging — typically at least 20 bp of overlap. PhiX reads are removed if `rm.phix = TRUE`.
 
 Define output file paths for filtered reads.
 
@@ -427,7 +431,7 @@ Run filtering and trimming. Results are saved to disk in the next chunk so this 
 out <- filterAndTrim(fnFwds, filtFwds, fnRevs, filtRevs,
                      truncLen = cfg$truncLen,
                      maxN = 0, maxEE = 2, truncQ = 2,
-                     compress = TRUE, multithread = TRUE,
+                     compress = TRUE, multithread = n_threads,
                      rm.phix = TRUE)
 
 ```
@@ -479,10 +483,10 @@ miseqBinnedErrfun <- makeBinnedQualErrfun(c(2, 9, 23, 38))
 ```{r learn_errors, eval = TRUE}
 
 errFwd <- learnErrors(filtFwds, errorEstimationFunction = miseqBinnedErrfun,
-                      multithread = TRUE, randomize = TRUE)
+                      multithread = n_threads, randomize = TRUE)
 
 errRev <- learnErrors(filtRevs, errorEstimationFunction = miseqBinnedErrfun,
-                      multithread = TRUE, randomize = TRUE)
+                      multithread = n_threads, randomize = TRUE)
 
 # save objects to files
 saveRDS(errFwd, "results/errFwd.rds")
@@ -517,8 +521,8 @@ The core DADA2 step. The algorithm uses the learned error model to infer the tru
 ```{r denoise, eval = TRUE}
 
 # Denoise both forward and reverse reads using error rate profiles
-dadaFwds <- dada(filtFwds, err = errFwd, multithread = TRUE)
-dadaRevs <- dada(filtRevs, err = errRev, multithread = TRUE)
+dadaFwds <- dada(filtFwds, err = errFwd, multithread = n_threads)
+dadaRevs <- dada(filtRevs, err = errRev, multithread = n_threads)
 
 # Save objects to files
 saveRDS(dadaFwds, "results/dadaFwds.rds")
@@ -566,7 +570,7 @@ Chimeric sequences are artefacts formed when an incomplete PCR extension product
 
 # Remove chimeras
 seqtab.nochim <- removeBimeraDenovo(seqtab, method = "consensus",
-                                    multithread = TRUE, verbose = TRUE)
+                                    multithread = n_threads, verbose = TRUE)
 
 # Dimensions
 dim(seqtab.nochim)
@@ -576,7 +580,7 @@ saveRDS(seqtab.nochim, "results/seqtabnochim.rds")
 
 ```
 
-Inspect the distribution of merged ASV lengths. Note that each bar represents the number of unique sequences at that length, not read counts. A tight distribution around the expected amplicon length confirms clean merging. The x-axis covers the observed ASV length range plus 50 nt on each side, so it adapts to any amplicon target.
+Inspect the distribution of merged ASV lengths. Note that each bar represents the number of unique sequences at that length, not read counts. A tight distribution around the expected amplicon length confirms clean merging. The x-axis covers the 0.1–99.9 % quantiles of ASV lengths plus 50 nt on each side, so it adapts to any amplicon target and leaves out extreme outliers.
 
 ```{r plot_ASV_length, fig.dim = c(8,6)}
 
@@ -653,17 +657,27 @@ kable(track, format = "html") %>%
 
 #### Assign taxonomy
 
-ASVs are classified with a naive Bayesian classifier against the reference database set in the amplicon settings: SILVA for 16S targets and UNITE for ITS targets. Classification is performed with `assignTaxonomy`. For 16S targets, it is followed by exact-match species assignment with `addSpecies`. Species assignment is run in chunks to avoid memory issues with large ASV tables — unassigned ASVs at species level are expected and normal.
+ASVs are classified with a naive Bayesian classifier against the reference database set in the amplicon settings: SILVA for 16S targets, UNITE for ITS targets and diat.barcode for rbcL targets. Classification is performed with `assignTaxonomy`. The SILVA training set reaches genus level, so for 16S targets it is followed by exact-match species assignment with `addSpecies`. UNITE and diat.barcode include species, so ITS and rbcL ASVs are classified down to species directly. Diat.barcode has an additional domain rank (Eukaryota), which is dropped so that all targets share the same seven ranks. Species assignment is run in chunks to avoid memory issues with large ASV tables — unassigned ASVs at species level are expected and normal.
+
+Bootstrap values are saved with the classification. Ranks with a bootstrap value below 50 are left unassigned. The bootstrap value of the deepest assigned rank is added to the taxonomy table as the `Confidence` column (0–100), giving the confidence of the reported identity. For 16S targets, the species rank has no confidence value, as it is assigned by exact matching with `addSpecies`, not by the Bayesian classifier. For ASVs with a species name, `Confidence` therefore refers to the genus.
 
 ```{r taxonomy}
 #| eval: !expr cfg$assign_taxonomy
 
 seqtab.nochim <- readRDS("results/seqtabnochim.rds")
 
-# Assign taxa up to genus level
-taxa <- assignTaxonomy(seqtab.nochim, cfg$ref_db, multithread = TRUE)
+# Assign taxa (genus or species level depending on the reference)
+taxa <- assignTaxonomy(seqtab.nochim, cfg$ref_db, multithread = n_threads,
+                       outputBootstraps = TRUE)
 
-saveRDS(taxa, "results/taxa.rds")
+# Keep the standard seven ranks if the reference has additional ones
+if (!is.null(cfg$tax_ranks)) {
+  taxa$tax <- taxa$tax[, cfg$tax_ranks, drop = FALSE]
+  taxa$boot <- taxa$boot[, cfg$tax_ranks, drop = FALSE]
+}
+
+saveRDS(taxa$tax, "results/taxa.rds")
+saveRDS(taxa$boot, "results/taxa_boot.rds")
 
 ```
 
@@ -713,6 +727,7 @@ for (i in seq_len(n_chunks)) {
 cat("✅ Species assignment finished successfully.\n")
 
 saveRDS(taxa_species, "results/taxa.rds")
+
 ```
 
 #### TreeSummarizedExperiment object
@@ -788,6 +803,22 @@ if (has_taxonomy && cfg$strip_prefix) {
   )
 }
 
+# Add confidence of the deepest assigned rank into rowData as 8th column
+if (has_taxonomy && file.exists("results/taxa_boot.rds")) {
+    boot <- readRDS("results/taxa_boot.rds")
+    if(!identical(rownames(boot), colnames(seqtab.nochim))) {
+        stop("taxa_boot.rds does not match seqtabnochim.rds. Re-run taxonomy")
+    }
+    rownames(boot) <- paste0("ASV", seq(nrow(boot)))
+    # Bootstrap value at the last non-NA rank (addSpecies has no bootstrap)
+    assigned <- !is.na(taxa[, seq_len(ncol(boot)), drop = FALSE])
+    deepest <- max.col(assigned, ties.method = "last")
+    confidence <- boot[cbind(seq_len(nrow(boot)), deepest)]
+    confidence[rowSums(assigned) == 0] <- NA
+    names(confidence) <- rownames(boot)
+    rowData(tse)$Confidence <- confidence[rownames(tse)]
+}
+
 # Filter ITS data
 if (has_taxonomy && cfg$type == "ITS") {
   tse <- tse[rowData(tse)$Kingdom %in% "Fungi", ]
@@ -809,10 +840,9 @@ Tree building is enabled with `create_tree` in the amplicon settings (16S target
 # and applies a midpoint root before adding the tree into the TSE object.
 # Designed to scale efficiently to large data sets
 #' @param tse A TreeSummarizedExperiment object.
-#' @param threads Integer. Number of threads to use for MAFFT alignment (default: 1).
-#'        FastTree uses the OpenMP build FastTreeMP when it is found in PATH
-#'        (all cores by default, limit with OMP_NUM_THREADS), otherwise the
-#'        single-threaded FastTree.
+#' @param threads Integer. Number of threads for MAFFT and FastTreeMP (default: 1).
+#'        FastTree uses the OpenMP build FastTreeMP when it is found in PATH,
+#'        otherwise the single-threaded FastTree.
 #' @param mafft_args Character arguments to MAFFT.
 #'        Default "--auto --parttree"
 #' @param fasttree_args Character. Arguments for FastTree. 
@@ -879,8 +909,9 @@ add_phylotree_to_tse <- function(tse,
     
     if (verbose) message("3. Running FastTree...")
     
-    fasttree_cmd <- sprintf("%s %s %s > %s", 
-                            fasttree_bin, fasttree_args, shQuote(fasta_out), shQuote(tree_out))
+    # OMP_NUM_THREADS limits FastTreeMP; the single-threaded build ignores it
+    fasttree_cmd <- sprintf("OMP_NUM_THREADS=%d %s %s %s > %s",
+                            threads, fasttree_bin, fasttree_args, shQuote(fasta_out), shQuote(tree_out))
     
     if (verbose) message("   Command: ", fasttree_cmd)
     res_fasttree <- system(fasttree_cmd, intern = FALSE, ignore.stdout = FALSE, ignore.stderr = !verbose)
@@ -929,7 +960,7 @@ add_phylotree_to_tse <- function(tse,
 ```{r phylo_tree}
 #| eval: !expr isTRUE(cfg$create_tree)
 
-tse <- add_phylotree_to_tse(tse, threads = 4)
+tse <- add_phylotree_to_tse(tse, threads = n_threads)
 ```
 
 #### Write final object into files

@@ -25,8 +25,9 @@ Reference databases are not installed by the script. Download them manually into
 |---|---|---|
 | `16SV3V4`, `16SV4`, `16SV4V5` | SILVA 138.2 formatted for DADA2 ([Zenodo](https://doi.org/10.5281/zenodo.14169026)) | `silva_nr99_v138.2_toGenus_trainset.fa.gz`, `silva_v138.2_assignSpecies.fa.gz` |
 | `ITS1`, `ITS2` | UNITE general FASTA release, all eukaryotes, 19.02.2025 ([unite.ut.ee](https://unite.ut.ee/repository.php)) | `sh_general_release_dynamic_all_19.02.2025.fasta` (decompressed) |
+| `RBCL` | Diat.barcode v15.2 formatted for DADA2, diatoms only ([Recherche Data Gouv](https://doi.org/10.57745/SE6GJH)) | `diat_barcode_v15_2_tax_assign_dada2.fasta` |
 
-The other targets (`12STELEO2`, `ADCR2`, `RBCL`) run without taxonomy assignment. To use another database or release, change `ref_db` and `species_db` in the amplicon registry of `dada2_template.qmd`.
+The other targets (`12STELEO2`, `ADCR2`) run without taxonomy assignment. To use another database or release, change `ref_db` and `species_db` in the amplicon registry of `dada2_template.qmd`.
 
 ## Start a new project
 
@@ -63,6 +64,10 @@ quarto render dada2_template.qmd -P amplicon:16SV4 -P group:Sample_type
 Available amplicon targets: `16SV3V4`, `16SV4`, `16SV4V5`, `ITS1`, `ITS2`, `12STELEO2`, `ADCR2`, `RBCL`.
 
 The optional `group` parameter names the metadata column used to group samples in the example analysis (PCoA and Shannon diversity). The column must contain categories shared by several samples; IDs and continuous measurements are rejected. If `group` is omitted, the example analysis is skipped.
+
+Multithreaded steps (DADA2, MAFFT, FastTreeMP) use all CPU cores except two.
+
+The taxonomy table (`rowData` of the TSE object and `results/taxonomy.tsv`) has a `Confidence` column: the bootstrap value (0–100) of the deepest assigned rank. For 16S targets, species come from exact matching with `addSpecies` and have no bootstrap value, so `Confidence` refers to the genus.
 
 ## Test data
 
